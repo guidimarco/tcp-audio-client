@@ -10,6 +10,8 @@ public class TcpAudioClient : IAudioClient
   private NetworkStream? _stream;
   private bool _isConnected;
 
+  public bool IsConnected => _isConnected;
+
   public event Action<string>? OnStatusChanged;
   public event Action<string>? OnMessageReceived;
 
@@ -21,7 +23,7 @@ public class TcpAudioClient : IAudioClient
   private async Task ListenForMessagesAsync()
   {
     byte[] buffer = new byte[1024];
-    var messageBuilder = new System.Text.StringBuilder();
+    var messageBuilder = new StringBuilder();
 
     try
     {
@@ -34,26 +36,24 @@ public class TcpAudioClient : IAudioClient
           break;
         }
 
-        string received = System.Text.Encoding.ASCII.GetString(buffer, 0, bytesRead);
+        string received = Encoding.ASCII.GetString(buffer, 0, bytesRead);
 
         foreach (char c in received)
         {
           if (c == '\r')
           {
-            string message = messageBuilder.ToString();
-            OnMessageReceived?.Invoke(message);
+            string message = messageBuilder.ToString().Trim();
+            if (!string.IsNullOrEmpty(message)) OnMessageReceived?.Invoke(message);
             messageBuilder.Clear();
           }
-          else
-          {
-            messageBuilder.Append(c);
-          }
+          else if (c == '\n') continue;
+          else messageBuilder.Append(c);
         }
       }
     }
     catch (Exception ex)
     {
-      Logger.Error($"Error listening for messages: {ex.Message}");
+      if (_isConnected) Logger.Error($"Read Error: {ex.Message}");
     }
     finally
     {
@@ -70,26 +70,13 @@ public class TcpAudioClient : IAudioClient
   /// <exception cref="Exception">If an error occurs while connecting to the server.</exception>
   public async Task ConnectAsync(string ipAddress, int port)
   {
-    while (!_isConnected)
-    {
-      try
-      {
-        _client = new TcpClient();
-        // ^ ^ ^ TcpClient empty to avoid sync connection
-        await _client.ConnectAsync(ipAddress, port);
-        _stream = _client.GetStream();
-        _isConnected = true;
-        OnStatusChanged?.Invoke("Connected");
-        Logger.Success("Client connected");
-        _ = Task.Run(() => ListenForMessagesAsync());
-      }
-      catch (Exception ex)
-      {
-        Logger.Error($"Error connecting to server: {ex.Message}");
-        _client?.Dispose();
-        await Task.Delay(2000);
-      }
-    }
+    _client = new TcpClient();
+    await _client.ConnectAsync(ipAddress, port);
+    _stream = _client.GetStream();
+    _isConnected = true;
+    
+    OnStatusChanged?.Invoke("Connected");
+    _ = Task.Run(() => ListenForMessagesAsync());
   }
 
   /// <summary>
@@ -101,30 +88,20 @@ public class TcpAudioClient : IAudioClient
   /// <exception cref="Exception">If an error occurs while sending the message.</exception>
   public async Task SendMessageAsync(string message)
   {
-    if (!_isConnected || _stream == null)
-    {
-      throw new InvalidOperationException("Client not connected");
-    }
+    if (!_isConnected || _stream == null) throw new InvalidOperationException("Not connected");
 
-    try {
-      byte[] data = Encoding.ASCII.GetBytes(message);
-      await _stream.WriteAsync(data, 0, data.Length);
-      Logger.Info($"Message sent: {message}");
-    }
-    catch (Exception ex)
-    {
-      Logger.Error($"Error sending message: {ex.Message}");
-      Disconnect();
-      throw;
-    }
+    byte[] data = Encoding.ASCII.GetBytes(message);
+    await _stream.WriteAsync(data, 0, data.Length);
+    Logger.Info($"Message sent: {message.Trim()}");
   }
 
   public void Disconnect()
   {
+    if (!_isConnected) return;
+    
     _isConnected = false;
-    _stream?.Close();
-    _client?.Close();
+    _stream?.Dispose();
+    _client?.Dispose();
     OnStatusChanged?.Invoke("Disconnected");
-    Logger.Info("Client disconnected");
   }
 }

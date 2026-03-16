@@ -2,6 +2,8 @@ namespace Tcp.AudioClient.Console.Core;
 
 public interface IAudioClient
 {
+  bool IsConnected { get; }
+  
   event Action<string> OnStatusChanged;
   event Action<string> OnMessageReceived;
 
