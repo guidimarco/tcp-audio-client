@@ -1,0 +1,26 @@
+# Cartelle di compilazione (binari e file temporanei)
+bin/
+obj/
+
+# File di configurazione utente di Visual Studio e VS Code
+.vs/
+.vscode/
+*.user
+*.userosscache
+*.sln.docstates
+
+# File di log e temporanei del sistema
+*.log
+.DS_Store (per Mac)
+Thumbs.db (per Windows)
+
+# Cartelle dei pacchetti NuGet (vengono ripristinati all'avvio)
+packages/
+publish/
+
+# Eventuali file di ambiente o segreti (se li userai)
+.env
+appsettings.Development.json
+
+# File di progetto
+/_private/
