@@ -8,16 +8,21 @@ public class AmplifierManager
 {
   private readonly IAudioClient _audioClient;
   private readonly AmplifierState _amplifierState;
+  private ConnectionStatus? _status = null;
   private readonly string _ipAddress;
   private readonly int _port;
+  private readonly int _interval;
   private bool _isUserExiting = false;
+  private bool _isFirstConnection = true;
+  private CancellationTokenSource? _cts;
 
-  public AmplifierManager(IAudioClient audioClient, AmplifierState amplifierState, string ipAddress, int port)
+  public AmplifierManager(IAudioClient audioClient, AmplifierState amplifierState, string ipAddress, int port, int interval)
   {
     _audioClient = audioClient;
     _amplifierState = amplifierState;
     _ipAddress = ipAddress;
     _port = port;
+    _interval = interval;
 
     _audioClient.OnMessageReceived += HandleIncomingMessage;
     _audioClient.OnStatusChanged += HandleStatusChanged;
@@ -30,32 +35,39 @@ public class AmplifierManager
   public async Task StartAsync()
   {
     _isUserExiting = false;
-    Logger.Info("Starting amplifier manager daemon...");
-    await ConnectionLoop();
+    _cts = new CancellationTokenSource();
+    Logger.Info("Starting Daemon...");
+    await ConnectionLoop(_cts.Token);
   }
 
-  private async Task ConnectionLoop()
+  private async Task ConnectionLoop(CancellationToken ct)
   {
-    while (!_isUserExiting)
+    while (!_isUserExiting && !ct.IsCancellationRequested)
     {
       try
       {
         await _audioClient.ConnectAsync(_ipAddress, _port);
-        await _audioClient.SendMessageAsync("INIT\r");
+
+        if (_isFirstConnection)
+        {
+          await _audioClient.SendMessageAsync("INIT\r");
+          _isFirstConnection = false;
+          Logger.Info("Session Started");
+        }
 
         while (!_isUserExiting && _audioClient.IsConnected)
         {
-          await Task.Delay(1000);
+          await Task.Delay(1000, ct);
         }
       }
-      catch (Exception ex)
+      catch (OperationCanceledException) {}
+      catch (Exception)
       {
-        Logger.Error($"Error connecting to the amplifier: {ex.Message}");
-        Logger.Info("Retrying connection in 2 seconds...");
-        await Task.Delay(2000);
+        Logger.Info($"Retrying connection in {_interval} seconds...");
+        await Task.Delay(_interval * 1000, ct);
       }
     }
-    Logger.Info("Amplifier manager daemon stopped");
+    Logger.Info("Daemon stopped");
   }
 
   /// <summary>
@@ -66,12 +78,11 @@ public class AmplifierManager
   {
     try
     {
-      if (string.IsNullOrWhiteSpace(message)) return;
-      Logger.Success($"Message received: {message}");
+      ResponseParser.Parse(message, _amplifierState);
     }
     catch (Exception ex)
     {
-      Logger.Error($"Failed to parse message: {ex.Message} on message: {message}");
+      Logger.Warning($"Failed to parse message: {ex.Message} on message: {message}");
     }
   }
 
@@ -79,35 +90,29 @@ public class AmplifierManager
   /// Handle the status changed.
   /// </summary>
   /// <param name="status">The status to handle.</param>
-  private void HandleStatusChanged(string status)
+  private void HandleStatusChanged(ConnectionStatus status)
   {
-    if (status.Equals("Connected", StringComparison.OrdinalIgnoreCase))
-    {
-      Logger.Success("Connected to the amplifier");
-    }
-    else if (status.Equals("Disconnected", StringComparison.OrdinalIgnoreCase))
-    {
-      Logger.Error("Disconnected from the amplifier");
-    }
-  }
+    if (status == _status) return;
 
-  /// <summary>
-  /// Set the volume of the amplifier.
-  /// </summary>
-  /// <param name="volume">The volume to set.</param>
-  public async Task SetVolumeAsync(int volume)
-  {
-    try
+    _status = status;
+    string message = $"New State: {status}";
+    switch (status)
     {
-    if (volume < 0) volume = 0;
-    if (volume > 100) volume = 100;
-
-      _amplifierState.Volume = volume;
-      await _audioClient.SendMessageAsync($"MV{volume:D3}\r");
-    }
-    catch (Exception ex)
-    {
-      Logger.Error($"Failed to send volume command: {ex.Message}");
+      case ConnectionStatus.Connecting:
+        Logger.Info(message);
+        break;
+      case ConnectionStatus.Connected:
+        Logger.Success(message);
+        break;
+      case ConnectionStatus.Disconnected:
+        Logger.Warning(message);
+        break;
+      case ConnectionStatus.Error:
+        Logger.Error(message);
+        break;
+      default:
+        Logger.Info(message);
+        break;
     }
   }
 
@@ -117,6 +122,7 @@ public class AmplifierManager
   public void Stop()
   {
     _isUserExiting = true;
+    _cts?.Cancel();
     _audioClient.Disconnect();
   }
 }

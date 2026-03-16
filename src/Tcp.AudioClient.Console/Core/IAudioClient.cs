@@ -1,10 +1,18 @@
 namespace Tcp.AudioClient.Console.Core;
 
+public enum ConnectionStatus
+{
+  Disconnected,
+  Connecting,
+  Connected,
+  Error,
+}
+
 public interface IAudioClient
 {
   bool IsConnected { get; }
   
-  event Action<string> OnStatusChanged;
+  event Action<ConnectionStatus> OnStatusChanged;
   event Action<string> OnMessageReceived;
 
   Task ConnectAsync(string ipAddress, int port);

@@ -8,6 +8,6 @@ public class AmplifierState
   public override string ToString()
   {
     string status = IsOn ? "ON" : "OFF";
-    return $"[AmplifierState] Stato: {status}, Volume: {Volume}";
+    return $"Stato: {status}, Volume: {Volume}";
   }
 }

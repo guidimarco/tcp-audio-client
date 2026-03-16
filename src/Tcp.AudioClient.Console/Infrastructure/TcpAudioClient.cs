@@ -8,11 +8,11 @@ public class TcpAudioClient : IAudioClient
 {
   private TcpClient? _client;
   private NetworkStream? _stream;
-  private bool _isConnected;
+  private volatile bool _isConnected;
 
   public bool IsConnected => _isConnected;
 
-  public event Action<string>? OnStatusChanged;
+  public event Action<ConnectionStatus>? OnStatusChanged;
   public event Action<string>? OnMessageReceived;
 
   /// <summary>
@@ -37,17 +37,21 @@ public class TcpAudioClient : IAudioClient
         }
 
         string received = Encoding.ASCII.GetString(buffer, 0, bytesRead);
+        messageBuilder.Append(received);
 
-        foreach (char c in received)
+        string currentData = messageBuilder.ToString();
+        int terminatorIndex;
+
+        while ((terminatorIndex = currentData.IndexOf('\r')) != -1)
         {
-          if (c == '\r')
+          string cmd = currentData.Substring(0, terminatorIndex).Trim();
+          if (!string.IsNullOrEmpty(cmd))
           {
-            string message = messageBuilder.ToString().Trim();
-            if (!string.IsNullOrEmpty(message)) OnMessageReceived?.Invoke(message);
-            messageBuilder.Clear();
+            OnMessageReceived?.Invoke(cmd);
           }
-          else if (c == '\n') continue;
-          else messageBuilder.Append(c);
+
+          messageBuilder.Remove(0, terminatorIndex + 1);
+          currentData = messageBuilder.ToString();
         }
       }
     }
@@ -70,13 +74,29 @@ public class TcpAudioClient : IAudioClient
   /// <exception cref="Exception">If an error occurs while connecting to the server.</exception>
   public async Task ConnectAsync(string ipAddress, int port)
   {
-    _client = new TcpClient();
-    await _client.ConnectAsync(ipAddress, port);
-    _stream = _client.GetStream();
-    _isConnected = true;
-    
-    OnStatusChanged?.Invoke("Connected");
-    _ = Task.Run(() => ListenForMessagesAsync());
+    try
+    {
+      _client = new TcpClient();
+      OnStatusChanged?.Invoke(ConnectionStatus.Connecting);
+
+      await _client.ConnectAsync(ipAddress, port);
+      _stream = _client.GetStream();
+      _isConnected = true;
+      
+      OnStatusChanged?.Invoke(ConnectionStatus.Connected);
+      _ = Task.Run(() => ListenForMessagesAsync());
+    }
+    catch (Exception ex)
+    {
+      _isConnected = false;
+      _stream?.Dispose();
+      _stream = null;
+      _client?.Dispose();
+      _client = null;
+      OnStatusChanged?.Invoke(ConnectionStatus.Error);
+      Logger.Warning($"Connection error: {ex.Message}");
+      throw;
+    }
   }
 
   /// <summary>
@@ -101,7 +121,9 @@ public class TcpAudioClient : IAudioClient
     
     _isConnected = false;
     _stream?.Dispose();
+    _stream = null;
     _client?.Dispose();
-    OnStatusChanged?.Invoke("Disconnected");
+    _client = null;
+    OnStatusChanged?.Invoke(ConnectionStatus.Disconnected);
   }
 }
